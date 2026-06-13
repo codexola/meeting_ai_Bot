@@ -1,10 +1,12 @@
+/** Backend URL for Next.js rewrites (build time). Browser uses same-origin /api proxy. */
+export function backendApiUrl(): string {
+  return (process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
+}
+
 export const API_BASE =
   typeof window !== "undefined"
-    ? "" // use Next.js rewrite proxy
-    : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
-export const WS_BASE =
-  process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000";
+    ? "" // same-origin — proxied by next.config rewrites on Vercel
+    : backendApiUrl();
 
 export type AppSettings = {
   language: string;
@@ -73,6 +75,8 @@ export const api = {
   listSessions: () => request<MeetingSummary[]>("/api/sessions"),
   deleteSession: (id: number) => request<{ deleted: number }>(`/api/sessions/${id}`, { method: "DELETE" }),
   getSessionArchive: (id: number) => request<{ text: string }>(`/api/sessions/${id}/archive`),
+  listUtterances: (id: number) => request<Utterance[]>(`/api/sessions/${id}/utterances`),
+  listResponses: (id: number) => request<ResponseChunk[]>(`/api/sessions/${id}/responses`),
   startAssistant: (id: number) => request<{ active: boolean; knowledge?: string }>(`/api/sessions/${id}/start`, { method: "POST" }),
   stopAssistant: (id: number) => request<{ active: boolean }>(`/api/sessions/${id}/stop`, { method: "POST" }),
   sendSpeech: (id: number, text: string, speaker_name?: string) =>
@@ -101,7 +105,7 @@ export const api = {
   deleteVoice: (id: number) => request<{ deleted: number }>(`/api/assets/voices/${id}`, { method: "DELETE" }),
   ingestMaterials: () => request("/api/materials/ingest", { method: "POST" }),
   startMeetingView: (id: number) =>
-    request<{ mode: string; started: boolean; error?: string }>(
+    request<{ mode: string; started: boolean; pending?: boolean; error?: string }>(
       `/api/sessions/${id}/meeting-view/start`,
       { method: "POST" }
     ),
@@ -137,6 +141,20 @@ export type MeetingSummary = {
   ended_at?: string | null;
 };
 
+export type Utterance = {
+  id: number;
+  speaker: string;
+  text: string;
+  timestamp: string;
+};
+
+export type ResponseChunk = {
+  index: number;
+  text: string;
+  phonetic: string;
+  estimated_seconds: number;
+};
+
 export type FaceAsset = {
   id: number;
   name: string;
@@ -157,15 +175,17 @@ export type WsEvent =
   | { type: "client_transcript"; payload: { speaker_name: string; text: string } }
   | { type: "response_chunk"; payload: { index: number; text: string; phonetic: string; estimated_seconds: number } };
 
+/** WebSocket URL — must be reachable from the browser (use wss:// when frontend is on HTTPS/Vercel). */
 export function meetingWsUrl(meetingId: number): string {
+  const configured = process.env.NEXT_PUBLIC_WS_URL?.replace(/\/$/, "");
+  if (configured) {
+    return `${configured}/api/ws/sessions/${meetingId}`;
+  }
   if (typeof window !== "undefined") {
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const host = window.location.hostname;
-    const port = process.env.NEXT_PUBLIC_WS_PORT || "8000";
-    return `${proto}//${host}:${port}/api/ws/sessions/${meetingId}`;
+    return `${proto}//${window.location.hostname}:8000/api/ws/sessions/${meetingId}`;
   }
-  const base = WS_BASE.replace(/\/$/, "");
-  return `${base}/api/ws/sessions/${meetingId}`;
+  return `ws://127.0.0.1:8000/api/ws/sessions/${meetingId}`;
 }
 
 export function platformLabel(platform: string): string {
@@ -188,4 +208,8 @@ export function usesMeetingStream(platform: string): boolean {
 export function meetingFrameUrl(meetingId: number, t?: number): string {
   const q = t ?? Date.now();
   return `/api/sessions/${meetingId}/meeting-view/frame.jpg?t=${q}`;
+}
+
+export function apiPath(path: string): string {
+  return `${API_BASE}${path.startsWith("/") ? path : `/${path}`}`;
 }

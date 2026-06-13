@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import MeetingSidebar from "@/components/MeetingSidebar";
 import {
   api,
+  apiPath,
   canEmbedMeeting,
   meetingFrameUrl,
   meetingWsUrl,
@@ -35,6 +36,7 @@ export default function MeetingRoom({ sessionId }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const meetingImgRef = useRef<HTMLImageElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const wsOkRef = useRef(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
 
@@ -73,9 +75,9 @@ export default function MeetingRoom({ sessionId }: Props) {
         .startMeetingView(sessionId)
         .then((res) => {
           if (cancelled) return;
-          if (res.started) {
+          if (res.started || res.pending) {
             setViewReady(true);
-            setViewError("");
+            setViewError(res.error || "");
           } else {
             setViewError(res.error || "Could not start meeting view");
             retryTimer = window.setTimeout(boot, 5000);
@@ -83,8 +85,10 @@ export default function MeetingRoom({ sessionId }: Props) {
         })
         .catch((e) => {
           if (cancelled) return;
-          setViewError(e instanceof Error ? e.message : "Meeting view failed");
-          retryTimer = window.setTimeout(boot, 5000);
+          // Vercel proxy may timeout while Chrome launches — still poll for frames
+          setViewReady(true);
+          setViewError(e instanceof Error ? e.message : "Meeting view starting…");
+          retryTimer = window.setTimeout(boot, 8000);
         });
     };
 
@@ -102,8 +106,12 @@ export default function MeetingRoom({ sessionId }: Props) {
   }, [session, viewReady]);
 
   useEffect(() => {
+    wsOkRef.current = false;
     const ws = new WebSocket(meetingWsUrl(sessionId));
     wsRef.current = ws;
+    ws.onopen = () => {
+      wsOkRef.current = true;
+    };
     ws.onmessage = (ev) => {
       const msg = JSON.parse(ev.data) as WsEvent;
       if (msg.type === "client_transcript") {
@@ -116,8 +124,37 @@ export default function MeetingRoom({ sessionId }: Props) {
         }
       }
     };
+    ws.onerror = () => {
+      wsOkRef.current = false;
+    };
     return () => ws.close();
   }, [sessionId, aiVoiceOn]);
+
+  // HTTP polling fallback when WebSocket is blocked (HTTPS Vercel → ws:// backend)
+  useEffect(() => {
+    if (!active) return;
+    const poll = window.setInterval(async () => {
+      if (wsOkRef.current) return;
+      try {
+        const [utterances, responses] = await Promise.all([
+          api.listUtterances(sessionId),
+          api.listResponses(sessionId),
+        ]);
+        if (utterances.length) {
+          setTranscript(
+            utterances.map((u) => `${u.speaker}: ${u.text}`).join("\n")
+          );
+        }
+        const latest = responses[responses.length - 1];
+        if (latest?.phonetic) {
+          setPhonetic(latest.phonetic);
+        }
+      } catch {
+        /* backend unreachable */
+      }
+    }, 2500);
+    return () => window.clearInterval(poll);
+  }, [sessionId, active]);
 
   useEffect(() => {
     const constraints: MediaStreamConstraints = {
@@ -163,7 +200,7 @@ export default function MeetingRoom({ sessionId }: Props) {
         if (e.data.size === 0) return;
         const fd = new FormData();
         fd.append("file", e.data, "chunk.webm");
-        await fetch(`/api/sessions/${sessionId}/stt`, { method: "POST", body: fd });
+        await fetch(apiPath(`/api/sessions/${sessionId}/stt`), { method: "POST", body: fd });
       };
       recorder.start(3000);
     } catch {
