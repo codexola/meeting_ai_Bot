@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 
@@ -10,6 +10,11 @@ export default function StartPage() {
   const [url, setUrl] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [backendOk, setBackendOk] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    api.health().then(() => setBackendOk(true)).catch(() => setBackendOk(false));
+  }, []);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -34,6 +39,17 @@ export default function StartPage() {
     <div className="start-page card">
       <h1>MeetingBot</h1>
       <p>Google Meet · Zoom · Microsoft Teams — shared database &amp; AI knowledge</p>
+      {backendOk === false && (
+        <p style={{ color: "#e5383b", marginBottom: 12 }}>
+          Backend unreachable. Ensure the VPS API is running and Vercel env{" "}
+          <code>NEXT_PUBLIC_API_URL=http://103.179.45.111:8000</code> is set, then redeploy.
+        </p>
+      )}
+      {backendOk === true && (
+        <p className="muted" style={{ marginBottom: 12, fontSize: 12 }}>
+          Backend connected
+        </p>
+      )}
       <form onSubmit={onSubmit}>
         <div className="form-row">
           <label htmlFor="name">Your name</label>

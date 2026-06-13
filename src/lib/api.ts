@@ -176,6 +176,16 @@ export type WsEvent =
   | { type: "response_chunk"; payload: { index: number; text: string; phonetic: string; estimated_seconds: number } };
 
 /** WebSocket URL — must be reachable from the browser (use wss:// when frontend is on HTTPS/Vercel). */
+export function canUseWebSocket(): boolean {
+  if (typeof window === "undefined") return false;
+  const wsUrl = process.env.NEXT_PUBLIC_WS_URL || "";
+  // Browsers block ws:// from https:// pages (mixed content)
+  if (window.location.protocol === "https:" && wsUrl.startsWith("ws://")) {
+    return false;
+  }
+  return Boolean(wsUrl);
+}
+
 export function meetingWsUrl(meetingId: number): string {
   const configured = process.env.NEXT_PUBLIC_WS_URL?.replace(/\/$/, "");
   if (configured) {
@@ -186,6 +196,11 @@ export function meetingWsUrl(meetingId: number): string {
     return `${proto}//${window.location.hostname}:8000/api/ws/sessions/${meetingId}`;
   }
   return `ws://127.0.0.1:8000/api/ws/sessions/${meetingId}`;
+}
+
+/** Production Vercel + HTTP backend: live updates use HTTP polling instead of WebSocket. */
+export function usesHttpPolling(): boolean {
+  return !canUseWebSocket();
 }
 
 export function platformLabel(platform: string): string {

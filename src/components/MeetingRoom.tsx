@@ -6,6 +6,7 @@ import {
   api,
   apiPath,
   canEmbedMeeting,
+  canUseWebSocket,
   meetingFrameUrl,
   meetingWsUrl,
   platformLabel,
@@ -106,6 +107,7 @@ export default function MeetingRoom({ sessionId }: Props) {
   }, [session, viewReady]);
 
   useEffect(() => {
+    if (!canUseWebSocket()) return;
     wsOkRef.current = false;
     const ws = new WebSocket(meetingWsUrl(sessionId));
     wsRef.current = ws;
@@ -130,11 +132,11 @@ export default function MeetingRoom({ sessionId }: Props) {
     return () => ws.close();
   }, [sessionId, aiVoiceOn]);
 
-  // HTTP polling fallback when WebSocket is blocked (HTTPS Vercel → ws:// backend)
+  // HTTP polling when WebSocket unavailable (HTTPS Vercel → ws:// VPS)
   useEffect(() => {
     if (!active) return;
     const poll = window.setInterval(async () => {
-      if (wsOkRef.current) return;
+      if (canUseWebSocket() && wsOkRef.current) return;
       try {
         const [utterances, responses] = await Promise.all([
           api.listUtterances(sessionId),

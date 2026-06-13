@@ -22,7 +22,9 @@ Open http://localhost:3000
 | Variable | Example | Purpose |
 |----------|---------|---------|
 | `NEXT_PUBLIC_API_URL` | `http://103.179.45.111:8000` | VPS backend for `/api` rewrites |
-| `NEXT_PUBLIC_WS_URL` | `wss://103.179.45.111:8000` | Live updates (use **wss://** on HTTPS Vercel) |
+| `NEXT_PUBLIC_WS_URL` | `ws://103.179.45.111:8000` | Optional; polling used on HTTPS Vercel |
+
+Production URL: **https://meeting-ai-bot.vercel.app**
 
 3. Deploy. Redeploy after changing env vars.
 
