@@ -127,6 +127,8 @@ export const api = {
       launch_in_progress: boolean;
       pending_join: boolean;
       has_frame: boolean;
+      in_call: boolean;
+      on_prejoin: boolean;
       error?: string | null;
     }>(`/api/sessions/${id}/meeting-view/status`),
   startFaceCam: (id: number) =>

@@ -36,6 +36,7 @@ export default function MeetingRoom({ sessionId }: Props) {
   const [joining, setJoining] = useState(false);
   const [faceCamHint, setFaceCamHint] = useState("");
   const [chromeStatus, setChromeStatus] = useState("");
+  const [meetLoginStatus, setMeetLoginStatus] = useState<"unknown" | "prejoin" | "joining" | "in_call">("unknown");
   const [backendOk, setBackendOk] = useState(true);
   const [appSettings, setAppSettings] = useState<AppSettings | null>(null);
   const meetingImgRef = useRef<HTMLImageElement>(null);
@@ -60,9 +61,14 @@ export default function MeetingRoom({ sessionId }: Props) {
   }, []);
 
   useEffect(() => {
-    api.health()
-      .then(() => setBackendOk(true))
-      .catch(() => setBackendOk(false));
+    const check = () => {
+      api.health()
+        .then(() => setBackendOk(true))
+        .catch(() => setBackendOk(false));
+    };
+    check();
+    const id = window.setInterval(check, 15000);
+    return () => window.clearInterval(id);
   }, []);
 
   useEffect(() => {
@@ -110,7 +116,7 @@ export default function MeetingRoom({ sessionId }: Props) {
 
   useEffect(() => {
     if (!session || !usesMeetingStream(session.platform) || !viewReady) return;
-    const id = window.setInterval(() => setFrameTick((t) => t + 1), 400);
+    const id = window.setInterval(() => setFrameTick((t) => t + 1), 800);
     return () => window.clearInterval(id);
   }, [session, viewReady]);
 
@@ -122,10 +128,22 @@ export default function MeetingRoom({ sessionId }: Props) {
       try {
         const st = await api.meetingViewStatus(sessionId);
         if (cancelled) return;
-        setBackendOk(true);
-        if (st.launch_in_progress) {
+        if (st.in_call) {
+          setMeetLoginStatus("in_call");
+          setChromeStatus(`In meeting as ${session.participant_name}`);
+          setViewError("");
+        } else if (st.pending_join) {
+          setMeetLoginStatus("joining");
+          setChromeStatus("Joining Google Meet on server…");
+        } else if (st.launch_in_progress) {
+          setMeetLoginStatus("joining");
           setChromeStatus("Starting Chrome on server…");
+        } else if (st.on_prejoin) {
+          setMeetLoginStatus("prejoin");
+          setChromeStatus("On pre-join screen — click Join Meeting");
+          setViewError("");
         } else if (st.chrome_ready && st.has_frame) {
+          setMeetLoginStatus("prejoin");
           setChromeStatus("Meeting view ready — click Join Meeting");
           setViewError("");
         } else if (st.chrome_ready) {
@@ -137,7 +155,7 @@ export default function MeetingRoom({ sessionId }: Props) {
           api.joinMeetingView(sessionId).catch(() => {});
         }
       } catch {
-        if (!cancelled) setBackendOk(false);
+        /* status poll failed — do not mark backend down */
       }
     };
 
@@ -272,6 +290,7 @@ export default function MeetingRoom({ sessionId }: Props) {
       for (let attempt = 0; attempt < 20; attempt++) {
         const res = await api.joinMeetingView(sessionId);
         if (res.joined) {
+          setMeetLoginStatus("joining");
           setChromeStatus("Joining Google Meet…");
           setFrameTick((t) => t + 1);
           return;
@@ -342,12 +361,31 @@ export default function MeetingRoom({ sessionId }: Props) {
                   src={meetingFrameUrl(sessionId, frameTick)}
                   alt="Google Meet"
                   onClick={onMeetingClick}
-                  onError={() => setViewError("Meeting stream unavailable — server Chrome may still be starting")}
+                  onError={() => setViewError("Meeting stream temporarily unavailable — retrying…")}
                   title="Click to interact with the meeting"
                 />
                 <div className="meeting-overlay">
-                  <button type="button" className="btn btn-primary" onClick={joinMeeting} disabled={joining}>
-                    {joining ? "Joining…" : "Join Meeting"}
+                  <div className="meet-status-row">
+                    <span
+                      className={
+                        meetLoginStatus === "in_call"
+                          ? "meet-status meet-status-ok"
+                          : meetLoginStatus === "joining"
+                            ? "meet-status meet-status-pending"
+                            : "meet-status"
+                      }
+                    >
+                      {meetLoginStatus === "in_call"
+                        ? "● In meeting"
+                        : meetLoginStatus === "joining"
+                          ? "● Joining…"
+                          : meetLoginStatus === "prejoin"
+                            ? "● Pre-join"
+                            : "● Connecting…"}
+                    </span>
+                  </div>
+                  <button type="button" className="btn btn-primary" onClick={joinMeeting} disabled={joining || meetLoginStatus === "in_call"}>
+                    {joining ? "Joining…" : meetLoginStatus === "in_call" ? "Joined" : "Join Meeting"}
                   </button>
                   <span className="muted tiny">
                     {chromeStatus || `Click the screen or use this button to join (name: ${session.participant_name})`}

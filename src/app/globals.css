@@ -162,11 +162,34 @@ textarea {
   right: 0;
   bottom: 0;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
   padding: 10px 12px;
   background: linear-gradient(transparent, rgba(0, 0, 0, 0.85));
   pointer-events: none;
+}
+
+.meet-status-row {
+  width: 100%;
+  pointer-events: none;
+}
+
+.meet-status {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  background: rgba(0, 0, 0, 0.5);
+  padding: 3px 8px;
+  border-radius: 4px;
+}
+
+.meet-status-ok {
+  color: #2dc653;
+}
+
+.meet-status-pending {
+  color: #ffd43b;
 }
 
 .meeting-overlay .btn {
