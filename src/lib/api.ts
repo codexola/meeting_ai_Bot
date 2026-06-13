@@ -11,6 +11,7 @@ export const API_BASE =
 export type AppSettings = {
   language: string;
   use_ai_voice: boolean;
+  use_ai_face: boolean;
   active_face_id: number | null;
   active_voice_id: number | null;
   blur_enabled: boolean;

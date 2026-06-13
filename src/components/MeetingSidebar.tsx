@@ -23,6 +23,22 @@ function applyTheme(theme: string) {
   document.documentElement.dataset.theme = theme === "light" ? "light" : "dark";
 }
 
+function selectedFace(faces: FaceAsset[], settings: AppSettings | null): FaceAsset | undefined {
+  if (!settings) return undefined;
+  if (settings.active_face_id != null) {
+    return faces.find((f) => f.id === settings.active_face_id);
+  }
+  return faces.find((f) => f.is_active);
+}
+
+function selectedVoice(voices: VoiceAsset[], settings: AppSettings | null): VoiceAsset | undefined {
+  if (!settings) return undefined;
+  if (settings.active_voice_id != null) {
+    return voices.find((v) => v.id === settings.active_voice_id);
+  }
+  return voices.find((v) => v.is_active);
+}
+
 export default function MeetingSidebar({ assistantActive, onAssetsChanged, onSettingsChanged }: Props) {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [faces, setFaces] = useState<FaceAsset[]>([]);
@@ -31,10 +47,10 @@ export default function MeetingSidebar({ assistantActive, onAssetsChanged, onSet
   const [micDevices, setMicDevices] = useState<{ id: string; label: string }[]>([]);
   const saveTimer = useRef<number | undefined>();
 
-  const activeFace = faces.find((f) => f.is_active);
-  const activeVoice = voices.find((v) => v.is_active);
-  const aiFaceOn = Boolean(activeFace);
-  const aiVoiceOn = Boolean(activeVoice);
+  const face = selectedFace(faces, settings);
+  const voice = selectedVoice(voices, settings);
+  const aiFaceOn = Boolean(settings?.use_ai_face && face);
+  const aiVoiceOn = Boolean(settings?.use_ai_voice && voice);
 
   const loadAll = useCallback(async () => {
     const [s, f, v] = await Promise.all([api.getSettings(), api.listFaces(), api.listVoices()]);
@@ -100,9 +116,12 @@ export default function MeetingSidebar({ assistantActive, onAssetsChanged, onSet
 
   async function onFaceSelect(id: string) {
     if (!id) {
-      await api.deactivateFace();
+      patchSettings({ active_face_id: null, use_ai_face: false });
     } else {
       await api.activateFace(Number(id));
+      const s = await api.getSettings();
+      setSettings(s);
+      onSettingsChanged(s);
     }
     await loadAll();
     onAssetsChanged();
@@ -110,9 +129,12 @@ export default function MeetingSidebar({ assistantActive, onAssetsChanged, onSet
 
   async function onVoiceSelect(id: string) {
     if (!id) {
-      await api.deactivateVoice();
+      patchSettings({ active_voice_id: null, use_ai_voice: false });
     } else {
       await api.activateVoice(Number(id));
+      const s = await api.getSettings();
+      setSettings(s);
+      onSettingsChanged(s);
     }
     await loadAll();
     onAssetsChanged();
@@ -132,24 +154,42 @@ export default function MeetingSidebar({ assistantActive, onAssetsChanged, onSet
     onAssetsChanged();
   }
 
-  async function toggleAiFace(on: boolean) {
-    if (on) {
-      if (activeFace) await api.activateFace(activeFace.id);
-      else if (faces[0]) await api.activateFace(faces[0].id);
-    } else {
-      await api.deactivateFace();
+  async function turnAiFaceOn() {
+    const faceId = settings?.active_face_id ?? face?.id ?? faces[0]?.id;
+    if (!faceId) return;
+    if (settings?.active_face_id !== faceId) {
+      await api.activateFace(faceId);
     }
+    patchSettings({ use_ai_face: true, active_face_id: faceId });
     await loadAll();
     onAssetsChanged();
   }
 
-  async function toggleAiVoice(on: boolean) {
-    if (on) {
-      if (activeVoice) await api.activateVoice(activeVoice.id);
-      else if (voices[0]) await api.activateVoice(voices[0].id);
-    } else {
-      await api.deactivateVoice();
+  async function turnAiFaceOff() {
+    await api.deactivateFace();
+    const s = await api.getSettings();
+    setSettings(s);
+    onSettingsChanged(s);
+    await loadAll();
+    onAssetsChanged();
+  }
+
+  async function turnAiVoiceOn() {
+    const voiceId = settings?.active_voice_id ?? voice?.id ?? voices[0]?.id;
+    if (!voiceId) return;
+    if (settings?.active_voice_id !== voiceId) {
+      await api.activateVoice(voiceId);
     }
+    patchSettings({ use_ai_voice: true, active_voice_id: voiceId });
+    await loadAll();
+    onAssetsChanged();
+  }
+
+  async function turnAiVoiceOff() {
+    await api.deactivateVoice();
+    const s = await api.getSettings();
+    setSettings(s);
+    onSettingsChanged(s);
     await loadAll();
     onAssetsChanged();
   }
@@ -169,7 +209,7 @@ export default function MeetingSidebar({ assistantActive, onAssetsChanged, onSet
         <div className="card">
           <div className="section-title">Face (AI)</div>
           <label className="field-label">Image:</label>
-          <select value={activeFace?.id ?? ""} onChange={(e) => onFaceSelect(e.target.value)}>
+          <select value={face?.id ?? ""} onChange={(e) => onFaceSelect(e.target.value)}>
             <option value="">— Select face —</option>
             {faces.map((f) => (
               <option key={f.id} value={f.id}>
@@ -177,8 +217,8 @@ export default function MeetingSidebar({ assistantActive, onAssetsChanged, onSet
               </option>
             ))}
           </select>
-          {activeFace && (
-            <img src={activeFace.url} alt={activeFace.name} className="face-thumb" style={{ marginTop: 8 }} />
+          {face && (
+            <img src={face.url} alt={face.name} className="face-thumb" style={{ marginTop: 8 }} />
           )}
           <button type="button" className="btn btn-secondary btn-block" style={{ marginTop: 8 }}>
             <label style={{ cursor: "pointer", display: "block" }}>
@@ -190,12 +230,19 @@ export default function MeetingSidebar({ assistantActive, onAssetsChanged, onSet
             <button
               type="button"
               className={`btn ${aiFaceOn ? "btn-primary" : "btn-secondary"}`}
-              onClick={() => toggleAiFace(!aiFaceOn)}
-              title="When Start is pressed: replace your face for the customer"
+              onClick={turnAiFaceOn}
+              disabled={aiFaceOn || faces.length === 0}
+              title="Enable AI face replacement until Stop is pressed"
             >
               AI Face {aiFaceOn ? "ON" : "OFF"}
             </button>
-            <button type="button" className="btn btn-danger" onClick={() => toggleAiFace(false)} title="Stop AI face replacement">
+            <button
+              type="button"
+              className="btn btn-danger"
+              onClick={turnAiFaceOff}
+              disabled={!aiFaceOn}
+              title="Stop AI face replacement (keeps selected image)"
+            >
               Stop
             </button>
           </div>
@@ -204,7 +251,7 @@ export default function MeetingSidebar({ assistantActive, onAssetsChanged, onSet
         <div className="card">
           <div className="section-title">Voice (AI)</div>
           <label className="field-label">Audio:</label>
-          <select value={activeVoice?.id ?? ""} onChange={(e) => onVoiceSelect(e.target.value)}>
+          <select value={voice?.id ?? ""} onChange={(e) => onVoiceSelect(e.target.value)}>
             <option value="">— Select voice —</option>
             {voices.map((v) => (
               <option key={v.id} value={v.id}>
@@ -222,12 +269,19 @@ export default function MeetingSidebar({ assistantActive, onAssetsChanged, onSet
             <button
               type="button"
               className={`btn ${aiVoiceOn ? "btn-primary" : "btn-secondary"}`}
-              onClick={() => toggleAiVoice(!aiVoiceOn)}
-              title="When Start is pressed: AI speaks responses with lip sync"
+              onClick={turnAiVoiceOn}
+              disabled={aiVoiceOn || voices.length === 0}
+              title="Enable AI voice until Stop is pressed"
             >
               AI Voice {aiVoiceOn ? "ON" : "OFF"}
             </button>
-            <button type="button" className="btn btn-danger" onClick={() => toggleAiVoice(false)} title="Stop AI voice">
+            <button
+              type="button"
+              className="btn btn-danger"
+              onClick={turnAiVoiceOff}
+              disabled={!aiVoiceOn}
+              title="Stop AI voice (keeps selected audio)"
+            >
               Stop
             </button>
           </div>

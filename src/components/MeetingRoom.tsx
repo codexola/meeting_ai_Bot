@@ -39,10 +39,14 @@ export default function MeetingRoom({ sessionId }: Props) {
   const wsOkRef = useRef(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
 
-  const activeFace = faces.find((f) => f.is_active);
-  const activeVoice = voices.find((v) => v.is_active);
-  const aiFaceOn = Boolean(activeFace);
-  const aiVoiceOn = Boolean(activeVoice);
+  const activeFace = appSettings?.active_face_id
+    ? faces.find((f) => f.id === appSettings.active_face_id)
+    : faces.find((f) => f.is_active);
+  const activeVoice = appSettings?.active_voice_id
+    ? voices.find((v) => v.id === appSettings.active_voice_id)
+    : voices.find((v) => v.is_active);
+  const aiFaceOn = Boolean(appSettings?.use_ai_face && activeFace);
+  const aiVoiceOn = Boolean(appSettings?.use_ai_voice && activeVoice);
   const streamMeet = session ? usesMeetingStream(session.platform) : false;
 
   const loadAssets = useCallback(async () => {
@@ -57,14 +61,15 @@ export default function MeetingRoom({ sessionId }: Props) {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([api.bootstrapSession(sessionId), loadAssets()])
-      .then(([boot]) => {
+    Promise.all([api.bootstrapSession(sessionId), api.getSettings(), loadAssets()])
+      .then(([boot, s]) => {
         if (cancelled) return;
         setSession(boot.session);
         setActive(Boolean(boot.session.assistant_active));
         setKnowledge(boot.knowledge_summary);
         setBackendOk(boot.database);
         setOpenaiOk(boot.openai_configured);
+        setAppSettings(s);
       })
       .catch(() => {
         if (!cancelled) setBackendOk(false);
