@@ -253,14 +253,9 @@ export function canEmbedMeeting(platform: string): boolean {
   return platform === "zoom" || platform === "teams";
 }
 
-/** Google Meet runs in the user's browser (Meet blocks iframe embedding). */
-export function usesBrowserMeet(platform: string): boolean {
-  return platform === "google_meet";
-}
-
-/** @deprecated Server Chrome stream — use usesBrowserMeet instead for web app */
+/** Google Meet is shown embedded in the panel via server Chrome stream (Meet blocks iframe). */
 export function usesMeetingStream(platform: string): boolean {
-  return false;
+  return platform === "google_meet";
 }
 
 export function meetingFrameUrl(meetingId: number, t?: number): string {

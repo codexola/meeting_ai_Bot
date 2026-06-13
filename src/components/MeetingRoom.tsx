@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import BrowserMeetJoin from "@/components/BrowserMeetJoin";
+import EmbeddedMeetView from "@/components/EmbeddedMeetView";
 import FacePreviewPair from "@/components/FacePreviewPair";
 import MeetingSidebar from "@/components/MeetingSidebar";
 import {
@@ -11,7 +11,7 @@ import {
   canUseWebSocket,
   meetingWsUrl,
   platformLabel,
-  usesBrowserMeet,
+  usesMeetingStream,
   type AppSettings,
   type FaceAsset,
   type Session,
@@ -27,10 +27,11 @@ export default function MeetingRoom({ sessionId }: Props) {
   const [voices, setVoices] = useState<VoiceAsset[]>([]);
   const [transcript, setTranscript] = useState("");
   const [phonetic, setPhonetic] = useState("Your AI response (phonetic) appears here after Start Meeting…");
-  const [status, setStatus] = useState("Join Google Meet in your browser, then click Start Meeting");
+  const [status, setStatus] = useState("Join the meeting above, then click Start Meeting");
   const [active, setActive] = useState(false);
   const [knowledge, setKnowledge] = useState("");
   const [meetJoined, setMeetJoined] = useState(false);
+  const [faceCamHint, setFaceCamHint] = useState("");
   const [backendOk, setBackendOk] = useState(true);
   const [openaiOk, setOpenaiOk] = useState(true);
   const [appSettings, setAppSettings] = useState<AppSettings | null>(null);
@@ -42,6 +43,7 @@ export default function MeetingRoom({ sessionId }: Props) {
   const activeVoice = voices.find((v) => v.is_active);
   const aiFaceOn = Boolean(activeFace);
   const aiVoiceOn = Boolean(activeVoice);
+  const streamMeet = session ? usesMeetingStream(session.platform) : false;
 
   const loadAssets = useCallback(async () => {
     const [f, v] = await Promise.all([api.listFaces(), api.listVoices()]);
@@ -109,7 +111,7 @@ export default function MeetingRoom({ sessionId }: Props) {
         const latest = live.responses[live.responses.length - 1];
         if (latest?.phonetic) setPhonetic(latest.phonetic);
       } catch {
-        /* ignore transient poll errors */
+        /* ignore */
       }
     }, 1500);
     return () => window.clearInterval(poll);
@@ -117,17 +119,26 @@ export default function MeetingRoom({ sessionId }: Props) {
 
   function buildActiveStatus(resKnowledge?: string) {
     const parts = ["Assistant: active"];
-    if (aiFaceOn) parts.push("AI face preview");
+    if (aiFaceOn) parts.push("AI face");
     if (aiVoiceOn) parts.push("AI voice");
     let text = parts.join(" · ");
     const kb = resKnowledge || knowledge;
     if (kb) text += ` — ${kb}`;
+    if (faceCamHint) text += ` · ${faceCamHint}`;
     return text;
   }
 
   async function startAssistant() {
     const res = await api.startAssistant(sessionId);
     setActive(true);
+    if (aiFaceOn && streamMeet) {
+      try {
+        const fc = await api.startFaceCam(sessionId);
+        setFaceCamHint(fc.hint || (fc.virtual_cam ? "OBS Virtual Camera ready" : "Virtual camera unavailable"));
+      } catch {
+        setFaceCamHint("Face cam start failed");
+      }
+    }
     setStatus(buildActiveStatus(res.knowledge));
     wsRef.current?.send(JSON.stringify({ type: "start" }));
 
@@ -155,7 +166,11 @@ export default function MeetingRoom({ sessionId }: Props) {
 
   async function stopAssistant() {
     await api.stopAssistant(sessionId);
+    if (aiFaceOn && streamMeet) {
+      api.stopFaceCam(sessionId).catch(() => {});
+    }
     setActive(false);
+    setFaceCamHint("");
     setStatus("Stopped — click Start Meeting to resume");
     wsRef.current?.send(JSON.stringify({ type: "stop" }));
     mediaRecorderRef.current?.stop();
@@ -171,7 +186,6 @@ export default function MeetingRoom({ sessionId }: Props) {
     return <div className="start-page">Loading session…</div>;
   }
 
-  const browserMeet = usesBrowserMeet(session.platform);
   const embed = canEmbedMeeting(session.platform);
 
   return (
@@ -192,17 +206,16 @@ export default function MeetingRoom({ sessionId }: Props) {
             )}
             {!openaiOk && (
               <p style={{ color: "#e5383b", margin: backendOk ? 0 : "8px 0 0" }}>
-                OpenAI API key not configured on the server — AI responses will not work.
+                OpenAI API key not configured on the server.
               </p>
             )}
           </div>
         )}
 
         <div className="meeting-frame">
-          {browserMeet ? (
-            <BrowserMeetJoin
+          {streamMeet ? (
+            <EmbeddedMeetView
               sessionId={sessionId}
-              meetingUrl={session.meeting_url}
               participantName={session.participant_name}
               onJoinedChange={setMeetJoined}
             />
@@ -233,20 +246,17 @@ export default function MeetingRoom({ sessionId }: Props) {
           sessionId={sessionId}
           faceImageUrl={activeFace?.url ?? null}
           enabled={aiFaceOn}
-          streamToMeet={false}
-          browserMeetMode={browserMeet}
+          streamToMeet={aiFaceOn && active && streamMeet}
         />
 
         <div className="card">
           <p className="section-title">
-            {browserMeet
+            {streamMeet
               ? meetJoined
-                ? `Joined as ${session.participant_name} — click Start Meeting on the right for AI assistant.`
-                : `Open Google Meet above, join as ${session.participant_name}, then Start Meeting.`
+                ? `In meeting as ${session.participant_name} — click Start Meeting for AI assistant.`
+                : `Join the meeting in the panel above (name: ${session.participant_name}), then Start Meeting.`
               : `Join the meeting above, then click Start Meeting on the right.`}
-            {aiFaceOn &&
-              browserMeet &&
-              " Use your webcam in Meet; AI face preview is shown below for reference."}
+            {aiFaceOn && active && streamMeet && " Select OBS Virtual Camera in Meet for AI face."}
           </p>
         </div>
 
