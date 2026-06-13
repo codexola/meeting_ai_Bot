@@ -1,9 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import EmbeddedMeetView from "@/components/EmbeddedMeetView";
+import BrowserMeetPanel from "@/components/BrowserMeetPanel";
 import FacePreviewPair from "@/components/FacePreviewPair";
 import MeetingSidebar from "@/components/MeetingSidebar";
+import MeetingTranscriptPanel from "@/components/MeetingTranscriptPanel";
+import { driveLipSyncFromAudio } from "@/lib/lipSyncClient";
 import {
   api,
   apiPath,
@@ -11,9 +13,9 @@ import {
   canUseWebSocket,
   meetingWsUrl,
   platformLabel,
-  usesMeetingStream,
   type AppSettings,
   type FaceAsset,
+  type LiveSession,
   type Session,
   type VoiceAsset,
   type WsEvent,
@@ -21,23 +23,37 @@ import {
 
 type Props = { sessionId: number };
 
+function latestAnswerPhonetic(live: LiveSession | null): string {
+  if (!live?.responses.length) {
+    return "Your AI response (phonetic) appears here after Start Meeting…";
+  }
+  const latest = live.responses[live.responses.length - 1];
+  return latest.phonetic || latest.text;
+}
+
 export default function MeetingRoom({ sessionId }: Props) {
   const [session, setSession] = useState<Session | null>(null);
   const [faces, setFaces] = useState<FaceAsset[]>([]);
   const [voices, setVoices] = useState<VoiceAsset[]>([]);
-  const [transcript, setTranscript] = useState("");
-  const [phonetic, setPhonetic] = useState("Your AI response (phonetic) appears here after Start Meeting…");
+  const [liveData, setLiveData] = useState<LiveSession | null>(null);
+  const [phonetic, setPhonetic] = useState(
+    "Your AI response (phonetic) appears here after Start Meeting…"
+  );
   const [status, setStatus] = useState("Join the meeting above, then click Start Meeting");
   const [active, setActive] = useState(false);
   const [knowledge, setKnowledge] = useState("");
   const [meetJoined, setMeetJoined] = useState(false);
-  const [faceCamHint, setFaceCamHint] = useState("");
   const [backendOk, setBackendOk] = useState(true);
   const [openaiOk, setOpenaiOk] = useState(true);
   const [appSettings, setAppSettings] = useState<AppSettings | null>(null);
+  const [lipOpenness, setLipOpenness] = useState(0);
+  const [tabAudioOn, setTabAudioOn] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
-  const wsOkRef = useRef(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const tabRecorderRef = useRef<MediaRecorder | null>(null);
+  const lastSpokenRef = useRef("");
+  const lipHandleRef = useRef<{ stop: () => void } | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const activeFace = appSettings?.active_face_id
     ? faces.find((f) => f.id === appSettings.active_face_id)
@@ -47,7 +63,6 @@ export default function MeetingRoom({ sessionId }: Props) {
     : voices.find((v) => v.is_active);
   const aiFaceOn = Boolean(appSettings?.use_ai_face && activeFace);
   const aiVoiceOn = Boolean(appSettings?.use_ai_voice && activeVoice);
-  const streamMeet = session ? usesMeetingStream(session.platform) : false;
 
   const loadAssets = useCallback(async () => {
     const [f, v] = await Promise.all([api.listFaces(), api.listVoices()]);
@@ -58,6 +73,49 @@ export default function MeetingRoom({ sessionId }: Props) {
   const handleSettingsChanged = useCallback((settings: AppSettings) => {
     setAppSettings(settings);
   }, []);
+
+  const refreshLive = useCallback(async () => {
+    const live = await api.sessionLive(sessionId);
+    setLiveData(live);
+    setPhonetic(latestAnswerPhonetic(live));
+    return live;
+  }, [sessionId]);
+
+  const speakResponse = useCallback(
+    async (text: string, phoneticText: string, index: number) => {
+      const key = `${index}:${text.slice(0, 48)}`;
+      if (lastSpokenRef.current === key) return;
+      lastSpokenRef.current = key;
+
+      if (!aiVoiceOn) return;
+
+      lipHandleRef.current?.stop();
+      audioRef.current?.pause();
+
+      const lang = appSettings?.language || "en";
+      try {
+        const url = await api.synthesizeSpeech(sessionId, text, lang);
+        const audio = new Audio(url);
+        audioRef.current = audio;
+        lipHandleRef.current = driveLipSyncFromAudio(audio, setLipOpenness);
+        audio.onended = () => {
+          lipHandleRef.current?.stop();
+          lipHandleRef.current = null;
+          setLipOpenness(0);
+          URL.revokeObjectURL(url);
+        };
+        await audio.play();
+      } catch {
+        if (typeof window !== "undefined" && "speechSynthesis" in window) {
+          const utter = new SpeechSynthesisUtterance(text);
+          utter.lang = lang;
+          window.speechSynthesis.speak(utter);
+        }
+      }
+      if (phoneticText) setPhonetic(phoneticText);
+    },
+    [aiVoiceOn, appSettings?.language, sessionId]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -70,6 +128,12 @@ export default function MeetingRoom({ sessionId }: Props) {
         setBackendOk(boot.database);
         setOpenaiOk(boot.openai_configured);
         setAppSettings(s);
+        return api.sessionLive(sessionId);
+      })
+      .then((live) => {
+        if (cancelled || !live) return;
+        setLiveData(live);
+        setPhonetic(latestAnswerPhonetic(live));
       })
       .catch(() => {
         if (!cancelled) setBackendOk(false);
@@ -81,110 +145,122 @@ export default function MeetingRoom({ sessionId }: Props) {
 
   useEffect(() => {
     if (!canUseWebSocket()) return;
-    wsOkRef.current = false;
     const ws = new WebSocket(meetingWsUrl(sessionId));
     wsRef.current = ws;
-    ws.onopen = () => {
-      wsOkRef.current = true;
-    };
     ws.onmessage = (ev) => {
       const msg = JSON.parse(ev.data) as WsEvent;
       if (msg.type === "client_transcript") {
-        setTranscript((t) => `${t}\n${msg.payload.speaker_name}: ${msg.payload.text}`.trim());
+        void refreshLive();
       } else if (msg.type === "response_chunk") {
         setPhonetic(msg.payload.phonetic);
-        if (typeof window !== "undefined" && "speechSynthesis" in window && aiVoiceOn) {
-          window.speechSynthesis.speak(new SpeechSynthesisUtterance(msg.payload.text));
-        }
+        void refreshLive().then((live) => {
+          const latest = live.responses[live.responses.length - 1];
+          if (latest) {
+            void speakResponse(latest.text, latest.phonetic, latest.index);
+          }
+        });
       }
     };
-    ws.onerror = () => {
-      wsOkRef.current = false;
-    };
     return () => ws.close();
-  }, [sessionId, aiVoiceOn]);
+  }, [sessionId, refreshLive, speakResponse]);
 
   useEffect(() => {
     if (!active) return;
-    const poll = window.setInterval(async () => {
-      if (canUseWebSocket() && wsOkRef.current) return;
-      try {
-        const live = await api.sessionLive(sessionId);
-        if (live.utterances.length) {
-          setTranscript(live.utterances.map((u) => `${u.speaker}: ${u.text}`).join("\n"));
-        }
+    const poll = window.setInterval(() => {
+      void refreshLive().then((live) => {
         const latest = live.responses[live.responses.length - 1];
-        if (latest?.phonetic) setPhonetic(latest.phonetic);
-      } catch {
-        /* ignore */
-      }
-    }, 1500);
+        if (latest && aiVoiceOn) {
+          void speakResponse(latest.text, latest.phonetic, latest.index);
+        }
+      });
+    }, 1200);
     return () => window.clearInterval(poll);
-  }, [sessionId, active]);
+  }, [sessionId, active, aiVoiceOn, refreshLive, speakResponse]);
 
   function buildActiveStatus(resKnowledge?: string) {
     const parts = ["Assistant: active"];
     if (aiFaceOn) parts.push("AI face");
     if (aiVoiceOn) parts.push("AI voice");
+    if (tabAudioOn) parts.push("Meet tab audio");
     let text = parts.join(" · ");
     const kb = resKnowledge || knowledge;
     if (kb) text += ` — ${kb}`;
-    if (faceCamHint) text += ` · ${faceCamHint}`;
     return text;
   }
 
+  function startMicRecorder(stream: MediaStream) {
+    const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+      ? "audio/webm;codecs=opus"
+      : "audio/webm";
+    const recorder = new MediaRecorder(stream, { mimeType: mime });
+    recorder.ondataavailable = (e) => {
+      if (e.data.size === 0) return;
+      const fd = new FormData();
+      fd.append("file", e.data, "chunk.webm");
+      fetch(apiPath(`/api/sessions/${sessionId}/stt`), { method: "POST", body: fd }).catch(() => {});
+    };
+    recorder.start(2000);
+    return recorder;
+  }
+
   async function startAssistant() {
-    const res = await api.startAssistant(sessionId);
+    const res = await api.startAssistant(sessionId, true);
     setActive(true);
-    if (aiFaceOn && streamMeet) {
-      try {
-        const fc = await api.startFaceCam(sessionId);
-        setFaceCamHint(fc.hint || (fc.virtual_cam ? "OBS Virtual Camera ready" : "Virtual camera unavailable"));
-      } catch {
-        setFaceCamHint("Face cam start failed");
-      }
-    }
     setStatus(buildActiveStatus(res.knowledge));
     wsRef.current?.send(JSON.stringify({ type: "start" }));
+    lastSpokenRef.current = "";
 
     try {
       const audioConstraints: MediaTrackConstraints = appSettings?.microphone_device
         ? { deviceId: { exact: appSettings.microphone_device } }
         : {};
       const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
-      const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-        ? "audio/webm;codecs=opus"
-        : "audio/webm";
-      const recorder = new MediaRecorder(stream, { mimeType: mime });
-      mediaRecorderRef.current = recorder;
-      recorder.ondataavailable = async (e) => {
-        if (e.data.size === 0) return;
-        const fd = new FormData();
-        fd.append("file", e.data, "chunk.webm");
-        fetch(apiPath(`/api/sessions/${sessionId}/stt`), { method: "POST", body: fd }).catch(() => {});
-      };
-      recorder.start(2000);
+      mediaRecorderRef.current = startMicRecorder(stream);
     } catch {
       setStatus((s) => `${s} · no mic detected`);
     }
   }
 
+  async function captureMeetTabAudio() {
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        audio: true,
+      });
+      const audioTracks = stream.getAudioTracks();
+      if (!audioTracks.length) {
+        stream.getTracks().forEach((t) => t.stop());
+        alert("No audio track — share a browser tab with audio enabled.");
+        return;
+      }
+      const audioStream = new MediaStream(audioTracks);
+      tabRecorderRef.current = startMicRecorder(audioStream);
+      setTabAudioOn(true);
+      setStatus(buildActiveStatus());
+    } catch {
+      /* user cancelled */
+    }
+  }
+
   async function stopAssistant() {
     await api.stopAssistant(sessionId);
-    if (aiFaceOn && streamMeet) {
-      api.stopFaceCam(sessionId).catch(() => {});
-    }
     setActive(false);
-    setFaceCamHint("");
+    setTabAudioOn(false);
     setStatus("Stopped — click Start Meeting to resume");
     wsRef.current?.send(JSON.stringify({ type: "stop" }));
     mediaRecorderRef.current?.stop();
     mediaRecorderRef.current = null;
+    tabRecorderRef.current?.stop();
+    tabRecorderRef.current = null;
+    lipHandleRef.current?.stop();
+    audioRef.current?.pause();
+    setLipOpenness(0);
   }
 
   async function manualSpeech() {
     const text = prompt("Enter client speech (for testing without mic):");
     if (text?.trim()) await api.sendSpeech(sessionId, text.trim());
+    void refreshLive();
   }
 
   if (!session) {
@@ -192,6 +268,7 @@ export default function MeetingRoom({ sessionId }: Props) {
   }
 
   const embed = canEmbedMeeting(session.platform);
+  const isGoogleMeet = session.platform === "google_meet";
 
   return (
     <div className="layout">
@@ -218,9 +295,9 @@ export default function MeetingRoom({ sessionId }: Props) {
         )}
 
         <div className="meeting-frame">
-          {streamMeet ? (
-            <EmbeddedMeetView
-              sessionId={sessionId}
+          {isGoogleMeet ? (
+            <BrowserMeetPanel
+              meetingUrl={session.meeting_url}
               participantName={session.participant_name}
               onJoinedChange={setMeetJoined}
             />
@@ -251,26 +328,37 @@ export default function MeetingRoom({ sessionId }: Props) {
           sessionId={sessionId}
           faceImageUrl={activeFace?.url ?? null}
           enabled={aiFaceOn}
-          streamToMeet={aiFaceOn && active && streamMeet}
+          streamToMeet={false}
+          lipOpenness={lipOpenness}
         />
 
         <div className="card">
           <p className="section-title">
-            {streamMeet
+            {isGoogleMeet
               ? meetJoined
                 ? `In meeting as ${session.participant_name} — click Start Meeting for AI assistant.`
-                : `Join the meeting in the panel above (name: ${session.participant_name}), then Start Meeting.`
+                : `Open Google Meet above (name: ${session.participant_name}), then Start Meeting.`
               : `Join the meeting above, then click Start Meeting on the right.`}
-            {aiFaceOn && active && streamMeet && " Select OBS Virtual Camera in Meet for AI face."}
+            {aiFaceOn && active && " AI face preview maps your camera to the selected image."}
           </p>
         </div>
 
         <div>
-          <div className="section-title">Client speech</div>
-          <div className="transcript">{transcript || "Client speech appears here after you click Start Meeting…"}</div>
-          <button className="btn btn-secondary" onClick={manualSpeech} style={{ marginTop: 8 }}>
-            Enter client speech manually
-          </button>
+          <div className="section-title">Client speech &amp; answers</div>
+          <MeetingTranscriptPanel
+            live={liveData}
+            emptyMessage="Client speech with names appears here in real time after Start Meeting…"
+          />
+          <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+            <button className="btn btn-secondary" onClick={manualSpeech}>
+              Enter client speech manually
+            </button>
+            {active && isGoogleMeet && (
+              <button className="btn btn-secondary" onClick={captureMeetTabAudio}>
+                {tabAudioOn ? "Meet tab audio active" : "Capture Meet tab audio"}
+              </button>
+            )}
+          </div>
         </div>
       </main>
 
@@ -284,7 +372,7 @@ export default function MeetingRoom({ sessionId }: Props) {
             Stop
           </button>
         )}
-        <div className="section-title">Your response (phonetic)</div>
+        <div className="section-title">Your response (English IPA)</div>
         <div className="phonetic scroll">{phonetic}</div>
         <p className={active ? "status-active" : "status-idle"}>{status}</p>
       </aside>

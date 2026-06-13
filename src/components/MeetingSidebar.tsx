@@ -17,7 +17,16 @@ type Props = {
   onSettingsChanged: (settings: AppSettings) => void;
 };
 
-const LANGUAGES = ["en", "ja", "es", "fr", "de", "zh"];
+const LANGUAGES: { code: string; label: string }[] = [
+  { code: "en", label: "English" },
+  { code: "ja", label: "Japanese" },
+  { code: "es", label: "Spanish" },
+  { code: "pt", label: "Portuguese" },
+  { code: "zh", label: "Chinese" },
+  { code: "vi", label: "Vietnamese" },
+  { code: "fr", label: "French" },
+  { code: "de", label: "German" },
+];
 
 function applyTheme(theme: string) {
   document.documentElement.dataset.theme = theme === "light" ? "light" : "dark";
@@ -315,8 +324,8 @@ export default function MeetingSidebar({ assistantActive, onAssetsChanged, onSet
           <label className="field-label">Language:</label>
           <select value={settings.language} onChange={(e) => patchSettings({ language: e.target.value })}>
             {LANGUAGES.map((lang) => (
-              <option key={lang} value={lang}>
-                {lang}
+              <option key={lang.code} value={lang.code}>
+                {lang.label}
               </option>
             ))}
           </select>

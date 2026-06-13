@@ -566,3 +566,97 @@ textarea {
   vertical-align: middle;
   margin-right: 6px;
 }
+
+.browser-meet-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 280px;
+  background: var(--bg);
+}
+
+.browser-meet-header {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.browser-meet-body {
+  flex: 1;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  justify-content: center;
+}
+
+.browser-meet-title {
+  font-size: 16px;
+  margin: 0;
+}
+
+.browser-meet-hint {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.browser-meet-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.browser-meet-steps {
+  margin: 8px 0 0;
+  padding-left: 20px;
+  line-height: 1.6;
+}
+
+.qa-transcript {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.qa-block {
+  border-left: 3px solid var(--accent);
+  padding-left: 10px;
+}
+
+.qa-question strong {
+  color: var(--blue);
+}
+
+.qa-lang {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.qa-answer {
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: rgba(64, 145, 108, 0.12);
+  border-radius: 8px;
+}
+
+.qa-answer-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 4px;
+}
+
+.qa-phonetic {
+  margin-top: 6px;
+  font-family: "Consolas", monospace;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.qa-pending {
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.tiny {
+  font-size: 12px;
+}

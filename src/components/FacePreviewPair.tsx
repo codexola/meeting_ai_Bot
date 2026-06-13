@@ -8,6 +8,7 @@ import {
   getFaceLandmarker,
   renderFaceSwap,
 } from "@/lib/faceSwap";
+import { drawMouthOverlay } from "@/lib/lipSyncClient";
 
 type Pt = { x: number; y: number };
 
@@ -16,6 +17,7 @@ type Props = {
   faceImageUrl: string | null;
   enabled: boolean;
   streamToMeet: boolean;
+  lipOpenness?: number;
 };
 
 export default function FacePreviewPair({
@@ -23,6 +25,7 @@ export default function FacePreviewPair({
   faceImageUrl,
   enabled,
   streamToMeet,
+  lipOpenness = 0,
 }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -125,6 +128,9 @@ export default function FacePreviewPair({
         const ts = performance.now();
         const result = fl.detectForVideo(video, ts);
         const swapped = renderFaceSwap(ctx, video, aiImg, aiPts, result, w, h);
+        if (swapped && lipOpenness > 0) {
+          drawMouthOverlay(ctx, w, h, lipOpenness);
+        }
         setFaceDetected(swapped);
 
         if (streamToMeet && swapped) {
@@ -149,7 +155,7 @@ export default function FacePreviewPair({
 
     rafRef.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafRef.current);
-  }, [enabled, modelReady, faceImageUrl, sessionId, streamToMeet]);
+  }, [enabled, modelReady, faceImageUrl, sessionId, streamToMeet, lipOpenness]);
 
   return (
     <div className="preview-row">

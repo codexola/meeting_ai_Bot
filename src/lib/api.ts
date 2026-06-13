@@ -81,7 +81,11 @@ export const api = {
   getSessionArchive: (id: number) => request<{ text: string }>(`/api/sessions/${id}/archive`),
   listUtterances: (id: number) => request<Utterance[]>(`/api/sessions/${id}/utterances`),
   listResponses: (id: number) => request<ResponseChunk[]>(`/api/sessions/${id}/responses`),
-  startAssistant: (id: number) => request<{ active: boolean; knowledge?: string }>(`/api/sessions/${id}/start`, { method: "POST" }),
+  startAssistant: (id: number, browserOnly = true) =>
+    request<{ active: boolean; knowledge?: string; browser_only?: boolean }>(
+      `/api/sessions/${id}/start?browser_only=${browserOnly}`,
+      { method: "POST" }
+    ),
   stopAssistant: (id: number) => request<{ active: boolean }>(`/api/sessions/${id}/stop`, { method: "POST" }),
   sendSpeech: (id: number, text: string, speaker_name?: string) =>
     request<{ accepted: boolean }>(`/api/sessions/${id}/speech`, {
@@ -142,6 +146,16 @@ export const api = {
     ),
   stopFaceCam: (id: number) =>
     request(`/api/sessions/${id}/face-cam/stop`, { method: "POST" }),
+  synthesizeSpeech: async (id: number, text: string, language?: string) => {
+    const res = await fetch(apiPath(`/api/sessions/${id}/tts`), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, language }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const blob = await res.blob();
+    return URL.createObjectURL(blob);
+  },
 };
 
 export type SessionBootstrap = {
@@ -184,6 +198,7 @@ export type Utterance = {
   speaker: string;
   text: string;
   timestamp: string;
+  detected_language?: string | null;
 };
 
 export type ResponseChunk = {
@@ -191,6 +206,7 @@ export type ResponseChunk = {
   text: string;
   phonetic: string;
   estimated_seconds: number;
+  prompt_text?: string;
 };
 
 export type FaceAsset = {
@@ -210,8 +226,19 @@ export type VoiceAsset = {
 };
 
 export type WsEvent =
-  | { type: "client_transcript"; payload: { speaker_name: string; text: string } }
-  | { type: "response_chunk"; payload: { index: number; text: string; phonetic: string; estimated_seconds: number } };
+  | {
+      type: "client_transcript";
+      payload: { speaker_name: string; text: string; detected_language?: string | null };
+    }
+  | {
+      type: "response_chunk";
+      payload: {
+        index: number;
+        text: string;
+        phonetic: string;
+        estimated_seconds: number;
+      };
+    };
 
 /** WebSocket URL — must be reachable from the browser (use wss:// when frontend is on HTTPS/Vercel). */
 export function canUseWebSocket(): boolean {
@@ -254,9 +281,9 @@ export function canEmbedMeeting(platform: string): boolean {
   return platform === "zoom" || platform === "teams";
 }
 
-/** Google Meet is shown embedded in the panel via server Chrome stream (Meet blocks iframe). */
-export function usesMeetingStream(platform: string): boolean {
-  return platform === "google_meet";
+/** Google Meet runs in the user's browser — no server Chrome stream. */
+export function usesMeetingStream(_platform: string): boolean {
+  return false;
 }
 
 export function meetingFrameUrl(meetingId: number, t?: number): string {
