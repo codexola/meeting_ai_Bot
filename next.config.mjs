@@ -1,16 +1,6 @@
 /** @type {import('next').NextConfig} */
-const apiUrl = (process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
-
 const nextConfig = {
-  /** Proxy /api/* to the Python backend (avoids mixed-content on HTTPS Vercel). */
-  async rewrites() {
-    return [
-      {
-        source: "/api/:path*",
-        destination: `${apiUrl}/api/:path*`,
-      },
-    ];
-  },
+  /** API proxy is handled by src/app/api/[...path]/route.ts for clearer errors. */
 };
 
 export default nextConfig;

@@ -35,6 +35,8 @@ export default function MeetingRoom({ sessionId }: Props) {
   const [frameTick, setFrameTick] = useState(0);
   const [joining, setJoining] = useState(false);
   const [faceCamHint, setFaceCamHint] = useState("");
+  const [chromeStatus, setChromeStatus] = useState("");
+  const [backendOk, setBackendOk] = useState(true);
   const [appSettings, setAppSettings] = useState<AppSettings | null>(null);
   const meetingImgRef = useRef<HTMLImageElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -55,6 +57,12 @@ export default function MeetingRoom({ sessionId }: Props) {
 
   const handleSettingsChanged = useCallback((settings: AppSettings) => {
     setAppSettings(settings);
+  }, []);
+
+  useEffect(() => {
+    api.health()
+      .then(() => setBackendOk(true))
+      .catch(() => setBackendOk(false));
   }, []);
 
   useEffect(() => {
@@ -105,6 +113,41 @@ export default function MeetingRoom({ sessionId }: Props) {
     const id = window.setInterval(() => setFrameTick((t) => t + 1), 400);
     return () => window.clearInterval(id);
   }, [session, viewReady]);
+
+  useEffect(() => {
+    if (!session || !usesMeetingStream(session.platform) || !viewReady) return;
+    let cancelled = false;
+
+    const pollStatus = async () => {
+      try {
+        const st = await api.meetingViewStatus(sessionId);
+        if (cancelled) return;
+        setBackendOk(true);
+        if (st.launch_in_progress) {
+          setChromeStatus("Starting Chrome on server…");
+        } else if (st.chrome_ready && st.has_frame) {
+          setChromeStatus("Meeting view ready — click Join Meeting");
+          setViewError("");
+        } else if (st.chrome_ready) {
+          setChromeStatus("Chrome ready — loading Meet…");
+        } else if (st.error && st.error !== "not_started") {
+          setViewError(st.error);
+        }
+        if (st.pending_join && st.chrome_ready) {
+          api.joinMeetingView(sessionId).catch(() => {});
+        }
+      } catch {
+        if (!cancelled) setBackendOk(false);
+      }
+    };
+
+    pollStatus();
+    const id = window.setInterval(pollStatus, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [session, sessionId, viewReady]);
 
   useEffect(() => {
     if (!canUseWebSocket()) return;
@@ -224,10 +267,24 @@ export default function MeetingRoom({ sessionId }: Props) {
 
   async function joinMeeting() {
     setJoining(true);
+    setViewError("");
     try {
-      await api.joinMeetingView(sessionId);
-      setFrameTick((t) => t + 1);
+      for (let attempt = 0; attempt < 20; attempt++) {
+        const res = await api.joinMeetingView(sessionId);
+        if (res.joined) {
+          setChromeStatus("Joining Google Meet…");
+          setFrameTick((t) => t + 1);
+          return;
+        }
+        if (!res.pending) {
+          throw new Error(res.error || "Could not join meeting");
+        }
+        setChromeStatus(res.error || "Waiting for server Chrome…");
+        await new Promise((r) => window.setTimeout(r, 2000));
+      }
+      setViewError("Server Chrome did not start in time — retry Join Meeting");
     } catch (e) {
+      setViewError(e instanceof Error ? e.message : "Join failed");
       console.error(e);
     } finally {
       setJoining(false);
@@ -264,6 +321,17 @@ export default function MeetingRoom({ sessionId }: Props) {
       />
 
       <main className="center">
+        {!backendOk && (
+          <div className="card" style={{ marginBottom: 12, borderColor: "#e5383b" }}>
+            <p style={{ color: "#e5383b", margin: 0 }}>
+              Cannot reach the meeting server. Use{" "}
+              <a href="https://meeting-ai-bot.vercel.app" target="_blank" rel="noreferrer">
+                meeting-ai-bot.vercel.app
+              </a>{" "}
+              or ensure the VPS API is running on port 8000 and reachable from the internet.
+            </p>
+          </div>
+        )}
         <div className="meeting-frame">
           {stream ? (
             viewReady ? (
@@ -274,13 +342,17 @@ export default function MeetingRoom({ sessionId }: Props) {
                   src={meetingFrameUrl(sessionId, frameTick)}
                   alt="Google Meet"
                   onClick={onMeetingClick}
+                  onError={() => setViewError("Meeting stream unavailable — server Chrome may still be starting")}
                   title="Click to interact with the meeting"
                 />
                 <div className="meeting-overlay">
                   <button type="button" className="btn btn-primary" onClick={joinMeeting} disabled={joining}>
                     {joining ? "Joining…" : "Join Meeting"}
                   </button>
-                  <span className="muted tiny">Click the screen or use this button to join (name: {session.participant_name})</span>
+                  <span className="muted tiny">
+                    {chromeStatus || `Click the screen or use this button to join (name: ${session.participant_name})`}
+                  </span>
+                  {viewError && <span className="preview-warn" style={{ display: "block", marginTop: 6 }}>{viewError}</span>}
                 </div>
               </>
             ) : (

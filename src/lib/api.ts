@@ -1,11 +1,11 @@
-/** Backend URL for Next.js rewrites (build time). Browser uses same-origin /api proxy. */
-export function backendApiUrl(): string {
-  return (process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
-}
+import { backendApiUrl } from "@/lib/backendUrl";
+
+/** Backend URL for Next.js server-side proxy. Browser uses same-origin /api. */
+export { backendApiUrl } from "@/lib/backendUrl";
 
 export const API_BASE =
   typeof window !== "undefined"
-    ? "" // same-origin — proxied by next.config rewrites on Vercel
+    ? "" // same-origin — proxied by Next.js API route on Vercel / VPS
     : backendApiUrl();
 
 export type AppSettings = {
@@ -116,9 +116,19 @@ export const api = {
       body: JSON.stringify({ x, y }),
     }),
   joinMeetingView: (id: number) =>
-    request<{ joined: boolean; error?: string }>(`/api/sessions/${id}/meeting-view/join`, {
-      method: "POST",
-    }),
+    request<{ joined: boolean; pending?: boolean; error?: string }>(
+      `/api/sessions/${id}/meeting-view/join`,
+      { method: "POST" }
+    ),
+  meetingViewStatus: (id: number) =>
+    request<{
+      chrome_ready: boolean;
+      started: boolean;
+      launch_in_progress: boolean;
+      pending_join: boolean;
+      has_frame: boolean;
+      error?: string | null;
+    }>(`/api/sessions/${id}/meeting-view/status`),
   startFaceCam: (id: number) =>
     request<{ active: boolean; virtual_cam: boolean; hint?: string }>(
       `/api/sessions/${id}/face-cam/start`,
