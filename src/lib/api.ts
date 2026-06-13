@@ -72,6 +72,9 @@ export const api = {
       body: JSON.stringify({ participant_name, meeting_url }),
     }),
   getSession: (id: number) => request<Session>(`/api/sessions/${id}`),
+  bootstrapSession: (id: number) =>
+    request<SessionBootstrap>(`/api/sessions/${id}/bootstrap`),
+  sessionLive: (id: number) => request<LiveSession>(`/api/sessions/${id}/live`),
   listSessions: () => request<MeetingSummary[]>("/api/sessions"),
   deleteSession: (id: number) => request<{ deleted: number }>(`/api/sessions/${id}`, { method: "DELETE" }),
   getSessionArchive: (id: number) => request<{ text: string }>(`/api/sessions/${id}/archive`),
@@ -138,6 +141,21 @@ export const api = {
     ),
   stopFaceCam: (id: number) =>
     request(`/api/sessions/${id}/face-cam/stop`, { method: "POST" }),
+};
+
+export type SessionBootstrap = {
+  session: Session;
+  openai_configured: boolean;
+  database: boolean;
+  knowledge_summary: string;
+  materials_count: number;
+  meetings_count: number;
+};
+
+export type LiveSession = {
+  assistant_active: boolean;
+  utterances: Utterance[];
+  responses: ResponseChunk[];
 };
 
 export type Session = {
@@ -235,8 +253,14 @@ export function canEmbedMeeting(platform: string): boolean {
   return platform === "zoom" || platform === "teams";
 }
 
-export function usesMeetingStream(platform: string): boolean {
+/** Google Meet runs in the user's browser (Meet blocks iframe embedding). */
+export function usesBrowserMeet(platform: string): boolean {
   return platform === "google_meet";
+}
+
+/** @deprecated Server Chrome stream — use usesBrowserMeet instead for web app */
+export function usesMeetingStream(platform: string): boolean {
+  return false;
 }
 
 export function meetingFrameUrl(meetingId: number, t?: number): string {

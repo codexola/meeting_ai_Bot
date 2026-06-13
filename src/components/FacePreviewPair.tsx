@@ -16,9 +16,16 @@ type Props = {
   faceImageUrl: string | null;
   enabled: boolean;
   streamToMeet: boolean;
+  browserMeetMode?: boolean;
 };
 
-export default function FacePreviewPair({ sessionId, faceImageUrl, enabled, streamToMeet }: Props) {
+export default function FacePreviewPair({
+  sessionId,
+  faceImageUrl,
+  enabled,
+  streamToMeet,
+  browserMeetMode = false,
+}: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const aiImgRef = useRef<HTMLImageElement | null>(null);
@@ -172,6 +179,9 @@ export default function FacePreviewPair({ sessionId, faceImageUrl, enabled, stre
         )}
         {enabled && faceDetected && streamToMeet && (
           <span className="preview-label preview-ok">AI face mapped · streaming to Meet</span>
+        )}
+        {enabled && faceDetected && browserMeetMode && (
+          <span className="preview-label preview-ok">AI face mapped · use your camera in Meet tab</span>
         )}
       </div>
     </div>
