@@ -28,14 +28,24 @@ export default function FacePreviewPair({ sessionId, faceImageUrl, enabled, stre
   const [cameraOk, setCameraOk] = useState(true);
   const [faceDetected, setFaceDetected] = useState(false);
   const [modelReady, setModelReady] = useState(false);
+  const [aiFaceReady, setAiFaceReady] = useState(false);
+  const [aiFaceError, setAiFaceError] = useState("");
 
   const loadAiFace = useCallback(async (url: string) => {
+    setAiFaceReady(false);
+    setAiFaceError("");
     const img = new Image();
     img.crossOrigin = "anonymous";
     img.src = url;
     await img.decode();
     aiImgRef.current = img;
-    aiPtsRef.current = await detectImageLandmarks(img);
+    const pts = await detectImageLandmarks(img);
+    aiPtsRef.current = pts;
+    if (pts) {
+      setAiFaceReady(true);
+    } else {
+      setAiFaceError("No face detected in selected image — use a clear front-facing photo");
+    }
   }, []);
 
   useEffect(() => {
@@ -48,6 +58,8 @@ export default function FacePreviewPair({ sessionId, faceImageUrl, enabled, stre
     if (!faceImageUrl) {
       aiImgRef.current = null;
       aiPtsRef.current = null;
+      setAiFaceReady(false);
+      setAiFaceError("");
       return;
     }
     loadAiFace(faceImageUrl).catch(console.error);
@@ -146,8 +158,17 @@ export default function FacePreviewPair({ sessionId, faceImageUrl, enabled, stre
         {!enabled && (
           <span className="preview-label">Transmitted to customer (AI face)</span>
         )}
-        {enabled && !faceDetected && (
+        {enabled && aiFaceError && (
+          <span className="preview-warn">{aiFaceError}</span>
+        )}
+        {enabled && !aiFaceError && !aiFaceReady && (
+          <span className="preview-warn">Loading face model…</span>
+        )}
+        {enabled && aiFaceReady && !faceDetected && cameraOk && (
           <span className="preview-warn">Face not detected — center yourself in camera</span>
+        )}
+        {enabled && aiFaceReady && faceDetected && !streamToMeet && (
+          <span className="preview-label preview-ok">AI face mapped to your camera</span>
         )}
         {enabled && faceDetected && streamToMeet && (
           <span className="preview-label preview-ok">AI face mapped · streaming to Meet</span>
