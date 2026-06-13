@@ -119,6 +119,13 @@ export const api = {
     request<{ joined: boolean; error?: string }>(`/api/sessions/${id}/meeting-view/join`, {
       method: "POST",
     }),
+  startFaceCam: (id: number) =>
+    request<{ active: boolean; virtual_cam: boolean; hint?: string }>(
+      `/api/sessions/${id}/face-cam/start`,
+      { method: "POST" }
+    ),
+  stopFaceCam: (id: number) =>
+    request(`/api/sessions/${id}/face-cam/stop`, { method: "POST" }),
 };
 
 export type Session = {

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import FacePreviewPair from "@/components/FacePreviewPair";
 import MeetingSidebar from "@/components/MeetingSidebar";
 import {
   api,
@@ -33,13 +34,12 @@ export default function MeetingRoom({ sessionId }: Props) {
   const [viewError, setViewError] = useState("");
   const [frameTick, setFrameTick] = useState(0);
   const [joining, setJoining] = useState(false);
+  const [faceCamHint, setFaceCamHint] = useState("");
   const [appSettings, setAppSettings] = useState<AppSettings | null>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
   const meetingImgRef = useRef<HTMLImageElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const wsOkRef = useRef(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const cameraStreamRef = useRef<MediaStream | null>(null);
 
   const activeFace = faces.find((f) => f.is_active);
   const activeVoice = voices.find((v) => v.is_active);
@@ -158,23 +158,6 @@ export default function MeetingRoom({ sessionId }: Props) {
     return () => window.clearInterval(poll);
   }, [sessionId, active]);
 
-  useEffect(() => {
-    const constraints: MediaStreamConstraints = {
-      video: true,
-      audio: false,
-    };
-    navigator.mediaDevices
-      ?.getUserMedia(constraints)
-      .then((stream) => {
-        cameraStreamRef.current = stream;
-        if (videoRef.current) videoRef.current.srcObject = stream;
-      })
-      .catch(() => {});
-    return () => {
-      cameraStreamRef.current?.getTracks().forEach((t) => t.stop());
-    };
-  }, []);
-
   function buildActiveStatus(resKnowledge?: string) {
     const parts = ["Assistant: active"];
     if (aiFaceOn) parts.push("AI face");
@@ -182,12 +165,21 @@ export default function MeetingRoom({ sessionId }: Props) {
     let text = parts.join(" · ");
     const kb = resKnowledge || knowledge;
     if (kb) text += ` — ${kb}`;
+    if (faceCamHint) text += ` · ${faceCamHint}`;
     return text;
   }
 
   async function startAssistant() {
     const res = await api.startAssistant(sessionId);
     setActive(true);
+    if (aiFaceOn) {
+      try {
+        const fc = await api.startFaceCam(sessionId);
+        setFaceCamHint(fc.hint || (fc.virtual_cam ? "OBS Virtual Camera ready" : "Virtual camera unavailable"));
+      } catch {
+        setFaceCamHint("Face cam start failed");
+      }
+    }
     setStatus(buildActiveStatus(res.knowledge));
     wsRef.current?.send(JSON.stringify({ type: "start" }));
 
@@ -212,7 +204,11 @@ export default function MeetingRoom({ sessionId }: Props) {
 
   async function stopAssistant() {
     await api.stopAssistant(sessionId);
+    if (aiFaceOn) {
+      api.stopFaceCam(sessionId).catch(() => {});
+    }
     setActive(false);
+    setFaceCamHint("");
     setStatus("Stopped — click Start Meeting to resume");
     wsRef.current?.send(JSON.stringify({ type: "stop" }));
     mediaRecorderRef.current?.stop();
@@ -307,22 +303,18 @@ export default function MeetingRoom({ sessionId }: Props) {
           )}
         </div>
 
-        <div className="preview-row">
-          <div className="preview-box">
-            <video ref={videoRef} autoPlay muted playsInline />
-            <span className="preview-label">Your camera</span>
-          </div>
-          <div className="preview-box ai-face-preview">
-            {aiFaceOn && activeFace ? (
-              <img src={activeFace.url} alt={activeFace.name} className="ai-face-img" />
-            ) : (
-              <span className="preview-label">Transmitted to customer (AI face)</span>
-            )}
-          </div>
-        </div>
+        <FacePreviewPair
+          sessionId={sessionId}
+          faceImageUrl={activeFace?.url ?? null}
+          enabled={aiFaceOn}
+          streamToMeet={aiFaceOn && active}
+        />
 
         <div className="card">
-          <p className="section-title">Join the meeting above (name: {session.participant_name}), then click Start Meeting on the right</p>
+          <p className="section-title">
+            Join the meeting above (name: {session.participant_name}), then click Start Meeting on the right.
+            {aiFaceOn && active && " Select OBS Virtual Camera in Meet for AI face."}
+          </p>
         </div>
 
         <div>
